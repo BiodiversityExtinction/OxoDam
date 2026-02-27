@@ -33,8 +33,8 @@ def _new_bucket() -> TransvCounts:
     return {"G": 0, "C": 0, "G>T": 0, "G>C": 0, "C>A": 0, "C>G": 0}
 
 
-def parse_sample_list(path: str) -> List[Tuple[str, str]]:
-    out: List[Tuple[str, str]] = []
+def parse_sample_list(path: str) -> List[Tuple[str, str, Optional[str]]]:
+    out: List[Tuple[str, str, Optional[str]]] = []
     with open(path, "r", encoding="utf-8") as fh:
         for i, line in enumerate(fh, start=1):
             line = line.strip()
@@ -43,10 +43,16 @@ def parse_sample_list(path: str) -> List[Tuple[str, str]]:
             parts = line.split("\t")
             if len(parts) < 2:
                 raise ValueError(f"{path}:{i}: expected at least 2 tab-separated columns")
+            if len(parts) > 3:
+                raise ValueError(f"{path}:{i}: expected 2 or 3 tab-separated columns")
             s, p = parts[0].strip(), parts[1].strip()
+            r = parts[2].strip() if len(parts) == 3 else ""
             if i == 1 and s.lower() in {"sample", "sample_name"} and re.search(r"path|bam", p.lower()):
-                continue
-            out.append((s, p))
+                if len(parts) < 3 or re.search(r"ref|genome|fasta|fa", r.lower()):
+                    continue
+            if not s or not p:
+                raise ValueError(f"{path}:{i}: sample and bam path must be non-empty")
+            out.append((s, p, r if r else None))
     if not out:
         raise ValueError(f"No samples found in {path}")
     return out
@@ -435,6 +441,7 @@ def analyze_sample(
     return {
         "sample": sample,
         "path": bam_path,
+        "reference": ref_fasta_path,
         "overall_gt_over_gc": s_overall["gt_over_gc"],
         "overall_ca_over_cg": s_overall["ca_over_cg"],
         "overall_combined": s_overall["combined"],
@@ -462,9 +469,12 @@ def analyze_sample(
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("bam", nargs="?", help="Input BAM (single-sample mode)")
-    ap.add_argument("--reference", required=True, help="Reference FASTA used for mapping")
+    ap.add_argument(
+        "--reference",
+        help="Reference FASTA used for mapping (required in single mode; optional in batch when supplied per row)",
+    )
     ap.add_argument("--sample-label", default="sample", help="Label for single-sample mode")
-    ap.add_argument("--sample-list", help="2-column TSV: sample_name<TAB>bam_path")
+    ap.add_argument("--sample-list", help="2- or 3-column TSV: sample_name<TAB>bam_path[<TAB>reference_fasta]")
     ap.add_argument("--batch-summary-out", help="Write batch summary TSV")
     ap.add_argument("--summary-tsv-out", help="Write single-sample summary TSV row")
     ap.add_argument("--summary-tsv-append", action="store_true", help="Append row to --summary-tsv-out (write header only if file is new)")
@@ -495,6 +505,8 @@ def parse_args() -> argparse.Namespace:
 
     if bool(args.bam) == bool(args.sample_list):
         ap.error("Use exactly one mode: positional BAM or --sample-list.")
+    if args.bam and not args.reference:
+        ap.error("--reference is required in single-sample mode.")
     return args
 
 
@@ -521,7 +533,12 @@ def main() -> None:
             os.makedirs(args.batch_pos_dir, exist_ok=True)
         seen: Dict[str, int] = defaultdict(int)
         out_rows: List[Dict[str, object]] = []
-        for sample, bam_path in samples:
+        for sample, bam_path, sample_ref in samples:
+            ref_path = sample_ref if sample_ref else args.reference
+            if not ref_path:
+                raise ValueError(
+                    f"Sample '{sample}' has no reference in sample list and no global --reference was provided."
+                )
             seen[sample] += 1
             suffix = f"_{seen[sample]}" if seen[sample] > 1 else ""
             safe = re.sub(r"[^A-Za-z0-9._-]", "_", sample) or "sample"
@@ -531,7 +548,7 @@ def main() -> None:
                 else None
             )
             pos_out = os.path.join(args.batch_pos_dir, f"{safe}{suffix}_pos.tsv") if args.batch_pos_dir else None
-            out_rows.append(analyze_sample(sample, bam_path, args.reference, args, pos_out, pdf_out))
+            out_rows.append(analyze_sample(sample, bam_path, ref_path, args, pos_out, pdf_out))
         if args.batch_summary_out:
             fields = list(out_rows[0].keys())
             with open(args.batch_summary_out, "w", encoding="utf-8", newline="") as fh:

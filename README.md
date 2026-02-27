@@ -46,21 +46,29 @@ Batch mode:
 ```bash
 python3 OxoDam.py \
   --sample-list sample_bams.tsv \
-  --reference /path/to/reference.fa \
   --plot-log-y \
   --batch-summary-out batch_summary.tsv \
   --batch-plot-dir batch_plots \
   --batch-pos-dir batch_pos
 ```
 
-`sample_bams.tsv` format (tab-separated):
+`sample_bams.tsv` format (tab-separated, recommended with per-sample reference):
 
 ```tsv
-sample_name	/path/to/sample1.bam
-sample2	/path/to/sample2.bam
+sample_name	/path/to/sample1.bam	/path/to/reference1.fa
+sample2	/path/to/sample2.bam	/path/to/reference2.fa
 ```
 
-Header row is optional (`sample_name` + `path/bam` is recognized and skipped).
+Alternative 2-column format is still supported if you pass a global `--reference`:
+
+```bash
+python3 OxoDam.py \
+  --sample-list sample_bams.tsv \
+  --reference /path/to/reference.fa \
+  --batch-summary-out batch_summary.tsv
+```
+
+Header row is optional (`sample_name` + `path/bam` [+ `reference`] is recognized and skipped).
 
 ## Parameters
 
@@ -69,8 +77,11 @@ Run `python3 OxoDam.py --help` for full CLI help.
 Core inputs:
 
 - `bam` (positional): input BAM for single-sample mode
-- `--sample-list`: 2-column TSV for batch mode
-- `--reference` (required): reference FASTA
+- `--sample-list`: 2- or 3-column TSV for batch mode
+- `--reference`:
+  - required in single-sample mode
+  - optional in batch mode if sample list provides per-row reference (3rd column)
+  - can be used as a global fallback for 2-column batch lists
 
 Output options:
 
@@ -180,7 +191,7 @@ Columns:
 
 One row per sample with:
 
-- sample/path
+- sample/path/reference
 - overall ratios
 - mean/median/max mismatch proportions
 - 3p and 5p enrichment ratios
