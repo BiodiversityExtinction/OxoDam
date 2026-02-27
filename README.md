@@ -62,6 +62,69 @@ sample2	/path/to/sample2.bam
 
 Header row is optional (`sample_name` + `path/bam` is recognized and skipped).
 
+## Parameters
+
+Run `python3 OxoDam.py --help` for full CLI help.
+
+Core inputs:
+
+- `bam` (positional): input BAM for single-sample mode
+- `--sample-list`: 2-column TSV for batch mode
+- `--reference` (required): reference FASTA
+
+Output options:
+
+- `--pos-tsv-out`: per-position TSV in single-sample mode
+- `--plot-pdf-out`: PDF plot in single-sample mode
+- `--summary-tsv-out`: one-row summary TSV in single-sample mode
+- `--summary-tsv-append`: append row to `--summary-tsv-out` (header written if file is new)
+- `--batch-summary-out`: summary TSV for batch mode
+- `--batch-plot-dir`: write one PDF per sample in batch mode
+- `--batch-pos-dir`: write one per-position TSV per sample in batch mode
+
+Read selection / filtering:
+
+- `--max-reads` (default `1000000`):
+  - max reads to process per sample
+  - `<=0` means use all reads
+- `--random-read-sample`:
+  - randomly sample eligible reads up to `--max-reads`
+  - when used, OxoDam performs a counting pass to sample uniformly
+- `--random-seed` (default `1`):
+  - RNG seed for reproducible random sampling
+- `--min-mapq` (default `30`)
+- `--min-baseq` (default `30`)
+- `--region`:
+  - optional region string (`chr:start-end`) for testing/debug
+
+Profiling settings:
+
+- `--window` (default `10`):
+  - terminal window size used for terminal vs interior fold
+- `--max-pos` (default `70`):
+  - maximum distance from read end counted internally
+- `--plot-max-pos` (default `30`):
+  - maximum distance shown in plot and used for mean/median/max mismatch summaries
+- `--pseudocount` (default `0.5`):
+  - stabilizes ratios when denominator counts are low/zero
+
+Orientation/end handling:
+
+- `--normalize-ends` (default):
+  - recommended for robust 3p/5p interpretation
+- `--no-normalize-ends`:
+  - raw query-orientation end assignment
+
+Performance:
+
+- `--threads` (default `1`):
+  - HTSlib BAM decompression threads
+
+Plot axis options:
+
+- `--plot-log-y`: log10 y-axis for mismatch proportion plots
+- `--plot-y-max`: fixed y-axis maximum
+
 ## Output Meaning
 
 ### Console summary
@@ -134,69 +197,6 @@ Two panels (`3p`, `5p`) showing per-position mismatch proportions:
 - `C>G / C` (magenta)
 
 Defaults to positions `1..30` (`--plot-max-pos 30`).
-
-## Parameters
-
-Run `python3 OxoDam.py --help` for full CLI help.
-
-Core inputs:
-
-- `bam` (positional): input BAM for single-sample mode
-- `--sample-list`: 2-column TSV for batch mode
-- `--reference` (required): reference FASTA
-
-Output options:
-
-- `--pos-tsv-out`: per-position TSV in single-sample mode
-- `--plot-pdf-out`: PDF plot in single-sample mode
-- `--summary-tsv-out`: one-row summary TSV in single-sample mode
-- `--summary-tsv-append`: append row to `--summary-tsv-out` (header written if file is new)
-- `--batch-summary-out`: summary TSV for batch mode
-- `--batch-plot-dir`: write one PDF per sample in batch mode
-- `--batch-pos-dir`: write one per-position TSV per sample in batch mode
-
-Read selection / filtering:
-
-- `--max-reads` (default `1000000`):
-  - max reads to process per sample
-  - `<=0` means use all reads
-- `--random-read-sample`:
-  - randomly sample eligible reads up to `--max-reads`
-  - when used, OxoDam performs a counting pass to sample uniformly
-- `--random-seed` (default `1`):
-  - RNG seed for reproducible random sampling
-- `--min-mapq` (default `30`)
-- `--min-baseq` (default `30`)
-- `--region`:
-  - optional region string (`chr:start-end`) for testing/debug
-
-Profiling settings:
-
-- `--window` (default `10`):
-  - terminal window size used for terminal vs interior fold
-- `--max-pos` (default `70`):
-  - maximum distance from read end counted internally
-- `--plot-max-pos` (default `30`):
-  - maximum distance shown in plot and used for mean/median/max mismatch summaries
-- `--pseudocount` (default `0.5`):
-  - stabilizes ratios when denominator counts are low/zero
-
-Orientation/end handling:
-
-- `--normalize-ends` (default):
-  - recommended for robust 3p/5p interpretation
-- `--no-normalize-ends`:
-  - raw query-orientation end assignment
-
-Performance:
-
-- `--threads` (default `1`):
-  - HTSlib BAM decompression threads
-
-Plot axis options:
-
-- `--plot-log-y`: log10 y-axis for mismatch proportion plots
-- `--plot-y-max`: fixed y-axis maximum
 
 ## Recommended defaults for screening
 
