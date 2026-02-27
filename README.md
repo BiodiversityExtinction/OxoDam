@@ -69,6 +69,9 @@ Header row is optional (`sample_name` + `path/bam` is recognized and skipped).
 For each sample, `OxoDam` prints:
 
 - `Reads processed`: number of reads used after filter checks and read cap (`--max-reads`)
+- `Read sampling mode`:
+  - default: first eligible reads in BAM traversal order
+  - optional random mode with `--random-read-sample` and `--random-seed`
 - `BAM decompression threads`: value of `--threads`
 - `End binning mode`:
   - `strand-normalized` (default): reverse-mapped reads are flipped for 5p/3p assignment
@@ -87,8 +90,12 @@ For each sample, `OxoDam` prints:
   - `>1` means terminal enrichment
 - `G>T/G mismatch proportion across plotted positions: mean, median, max`:
   - summary of per-position `G>T / G` for plotted range (`--plot-max-pos`)
+- `G>C/G mismatch proportion across plotted positions: mean, median, max`:
+  - summary of per-position `G>C / G` for plotted range
 - `C>A/C mismatch proportion across plotted positions: mean, median, max`:
   - summary of per-position `C>A / C` for plotted range
+- `C>G/C mismatch proportion across plotted positions: mean, median, max`:
+  - summary of per-position `C>G / C` for plotted range
 
 ### Per-position TSV (`--pos-tsv-out`, `--batch-pos-dir`)
 
@@ -115,6 +122,7 @@ One row per sample with:
 - mean/median/max mismatch proportions
 - 3p and 5p enrichment ratios
 - 3p and 5p terminal/interior fold values
+  - includes all four per-position proportions: `G>T/G`, `G>C/G`, `C>A/C`, `C>G/C`
 
 ### PDF plot (`--plot-pdf-out`, `--batch-plot-dir`)
 
@@ -141,6 +149,8 @@ Output options:
 
 - `--pos-tsv-out`: per-position TSV in single-sample mode
 - `--plot-pdf-out`: PDF plot in single-sample mode
+- `--summary-tsv-out`: one-row summary TSV in single-sample mode
+- `--summary-tsv-append`: append row to `--summary-tsv-out` (header written if file is new)
 - `--batch-summary-out`: summary TSV for batch mode
 - `--batch-plot-dir`: write one PDF per sample in batch mode
 - `--batch-pos-dir`: write one per-position TSV per sample in batch mode
@@ -150,6 +160,11 @@ Read selection / filtering:
 - `--max-reads` (default `1000000`):
   - max reads to process per sample
   - `<=0` means use all reads
+- `--random-read-sample`:
+  - randomly sample eligible reads up to `--max-reads`
+  - when used, OxoDam performs a counting pass to sample uniformly
+- `--random-seed` (default `1`):
+  - RNG seed for reproducible random sampling
 - `--min-mapq` (default `30`)
 - `--min-baseq` (default `30`)
 - `--region`:
@@ -206,5 +221,6 @@ python3 OxoDam.py \
 ## Notes / Caveats
 
 - `--max-reads` processes reads in BAM traversal order (deterministic, not random).
+- Use `--random-read-sample` if you want a random subset instead of first reads.
 - Very low-count positions can produce unstable peaks; interpret per-position maxima with denominator counts in mind (`G`, `C` columns in TSV).
 - Global enrichment ratios are usually more stable than single-position outliers.

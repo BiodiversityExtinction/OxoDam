@@ -14,6 +14,7 @@ import argparse
 import csv
 import math
 import os
+import random
 import re
 import subprocess
 import tempfile
@@ -51,6 +52,21 @@ def parse_sample_list(path: str) -> List[Tuple[str, str]]:
     return out
 
 
+def _eligible_read(aln: pysam.AlignedSegment, min_mapq: int) -> bool:
+    if aln.is_unmapped or aln.is_secondary or aln.is_supplementary or aln.is_duplicate or aln.is_qcfail:
+        return False
+    if aln.mapping_quality < min_mapq:
+        return False
+    if aln.query_sequence is None or aln.query_qualities is None:
+        return False
+    read_len = aln.query_length
+    if not read_len or read_len <= 0:
+        return False
+    if aln.reference_start is None or aln.reference_end is None or aln.reference_end <= aln.reference_start:
+        return False
+    return True
+
+
 def compute_counts(
     bam_path: str,
     ref_fasta_path: str,
@@ -60,28 +76,45 @@ def compute_counts(
     max_reads: int,
     threads: int,
     normalize_ends: bool,
+    random_read_sample: bool,
+    random_seed: int,
     region: Optional[str] = None,
 ) -> Tuple[EndPosCounts, int]:
     counts: EndPosCounts = {"5p": defaultdict(_new_bucket), "3p": defaultdict(_new_bucket)}
     reads_used = 0
+    selected_ordinals: Optional[set[int]] = None
+    max_selected_ordinal = -1
     with pysam.AlignmentFile(bam_path, "rb", threads=max(1, threads)) as bam, pysam.FastaFile(ref_fasta_path) as ref:
+        if random_read_sample and max_reads > 0:
+            # Pass 1: count eligible reads.
+            eligible_total = 0
+            read_iter1 = bam.fetch(region=region) if region else bam.fetch(until_eof=True)
+            for aln in read_iter1:
+                if _eligible_read(aln, min_mapq):
+                    eligible_total += 1
+            target = min(max_reads, eligible_total)
+            if target > 0:
+                rng = random.Random(random_seed)
+                selected_ordinals = set(rng.sample(range(eligible_total), target))
+                max_selected_ordinal = max(selected_ordinals)
+            bam.reset()
+
         read_iter = bam.fetch(region=region) if region else bam.fetch(until_eof=True)
+        eligible_idx = -1
         for aln in read_iter:
-            if max_reads > 0 and reads_used >= max_reads:
+            if selected_ordinals is None and max_reads > 0 and reads_used >= max_reads:
                 break
-            if aln.is_unmapped or aln.is_secondary or aln.is_supplementary or aln.is_duplicate or aln.is_qcfail:
+            if not _eligible_read(aln, min_mapq):
                 continue
-            if aln.mapping_quality < min_mapq:
-                continue
-            if aln.query_sequence is None or aln.query_qualities is None:
-                continue
-            read_len = aln.query_length
-            if not read_len or read_len <= 0:
-                continue
+            eligible_idx += 1
+            if selected_ordinals is not None:
+                if eligible_idx not in selected_ordinals:
+                    if max_selected_ordinal >= 0 and eligible_idx > max_selected_ordinal and reads_used >= len(selected_ordinals):
+                        break
+                    continue
+            read_len = aln.query_length  # guaranteed valid by _eligible_read
             ref_start = aln.reference_start
             ref_end = aln.reference_end
-            if ref_start is None or ref_end is None or ref_end <= ref_start:
-                continue
             ref_seq = ref.fetch(aln.reference_name, ref_start, ref_end).upper()
             if not ref_seq:
                 continue
@@ -324,6 +357,8 @@ def analyze_sample(
         max_reads=args.max_reads,
         threads=args.threads,
         normalize_ends=args.normalize_ends,
+        random_read_sample=args.random_read_sample,
+        random_seed=args.random_seed,
         region=args.region,
     )
     counts, reads_used = counts
@@ -336,15 +371,23 @@ def analyze_sample(
     rows = per_position_rows(counts, args.pseudocount)
     rows_plot = [r for r in rows if int(r["Pos"]) <= args.plot_max_pos]
     gt_vals = [float(r["p_gt_over_g"]) for r in rows_plot]
+    gc_vals = [float(r["p_gc_over_g"]) for r in rows_plot]
     ca_vals = [float(r["p_ca_over_c"]) for r in rows_plot]
+    cg_vals = [float(r["p_cg_over_c"]) for r in rows_plot]
     gt_mean, gt_median, gt_max = safe_mean(gt_vals), safe_median(gt_vals), safe_max(gt_vals)
+    gc_mean, gc_median, gc_max = safe_mean(gc_vals), safe_median(gc_vals), safe_max(gc_vals)
     ca_mean, ca_median, ca_max = safe_mean(ca_vals), safe_median(ca_vals), safe_max(ca_vals)
+    cg_mean, cg_median, cg_max = safe_mean(cg_vals), safe_median(cg_vals), safe_max(cg_vals)
 
     print(f"[{sample}] Sample summary (terminal window: positions 1-{args.window}; pseudocount: {args.pseudocount:g})")
     if args.max_reads > 0:
         print(f"  Reads processed: {reads_used} (max_reads={args.max_reads})")
     else:
         print(f"  Reads processed: {reads_used} (max_reads=all)")
+    if args.random_read_sample and args.max_reads > 0:
+        print(f"  Read sampling mode: random eligible-read sample (seed={args.random_seed})")
+    else:
+        print("  Read sampling mode: first eligible reads in BAM traversal order")
     print(f"  BAM decompression threads: {args.threads}")
     print(f"  End binning mode: {'strand-normalized' if args.normalize_ends else 'raw query-orientation'}")
     print(f"  Plot/report range: positions 1-{args.plot_max_pos} from each read end")
@@ -363,8 +406,16 @@ def analyze_sample(
         f"mean={gt_mean:.5f}, median={gt_median:.5f}, max={gt_max:.5f}"
     )
     print(
+        f"  G>C/G mismatch proportion across plotted positions: "
+        f"mean={gc_mean:.5f}, median={gc_median:.5f}, max={gc_max:.5f}"
+    )
+    print(
         f"  C>A/C mismatch proportion across plotted positions: "
-        f"mean={ca_mean:.5f}, median={ca_median:.5f}, max={ca_max:.5f}\n"
+        f"mean={ca_mean:.5f}, median={ca_median:.5f}, max={ca_max:.5f}"
+    )
+    print(
+        f"  C>G/C mismatch proportion across plotted positions: "
+        f"mean={cg_mean:.5f}, median={cg_median:.5f}, max={cg_max:.5f}\n"
     )
 
     if pos_tsv_out:
@@ -390,9 +441,15 @@ def analyze_sample(
         "mean_p_gt_over_g": gt_mean,
         "median_p_gt_over_g": gt_median,
         "max_p_gt_over_g": gt_max,
+        "mean_p_gc_over_g": gc_mean,
+        "median_p_gc_over_g": gc_median,
+        "max_p_gc_over_g": gc_max,
         "mean_p_ca_over_c": ca_mean,
         "median_p_ca_over_c": ca_median,
         "max_p_ca_over_c": ca_max,
+        "mean_p_cg_over_c": cg_mean,
+        "median_p_cg_over_c": cg_median,
+        "max_p_cg_over_c": cg_max,
         "3p_gt_over_gc": s3["gt_over_gc"],
         "3p_ca_over_cg": s3["ca_over_cg"],
         "3p_terminal_interior_fold": fold3,
@@ -409,6 +466,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--sample-label", default="sample", help="Label for single-sample mode")
     ap.add_argument("--sample-list", help="2-column TSV: sample_name<TAB>bam_path")
     ap.add_argument("--batch-summary-out", help="Write batch summary TSV")
+    ap.add_argument("--summary-tsv-out", help="Write single-sample summary TSV row")
+    ap.add_argument("--summary-tsv-append", action="store_true", help="Append row to --summary-tsv-out (write header only if file is new)")
     ap.add_argument("--batch-plot-dir", help="Output directory for batch PDFs")
     ap.add_argument("--batch-pos-dir", help="Output directory for batch per-position TSV files")
     ap.add_argument("--pos-tsv-out", help="Write per-position TSV (single-sample mode)")
@@ -420,6 +479,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--min-mapq", type=int, default=30, help="Minimum mapping quality (default: 30)")
     ap.add_argument("--min-baseq", type=int, default=30, help="Minimum base quality (default: 30)")
     ap.add_argument("--max-reads", type=int, default=1000000, help="Maximum reads to process per sample; <=0 means all (default: 1000000)")
+    ap.add_argument("--random-read-sample", action="store_true", help="Randomly sample eligible reads up to --max-reads")
+    ap.add_argument("--random-seed", type=int, default=1, help="Seed for --random-read-sample (default: 1)")
     ap.add_argument("--threads", type=int, default=1, help="HTSlib BAM decompression threads (default: 1)")
     ap.add_argument(
         "--normalize-ends",
@@ -435,6 +496,19 @@ def parse_args() -> argparse.Namespace:
     if bool(args.bam) == bool(args.sample_list):
         ap.error("Use exactly one mode: positional BAM or --sample-list.")
     return args
+
+
+def write_summary_tsv(path: str, row: Dict[str, object], append: bool) -> None:
+    fields = list(row.keys())
+    mode = "a" if append else "w"
+    write_header = True
+    if append and os.path.exists(path) and os.path.getsize(path) > 0:
+        write_header = False
+    with open(path, mode, encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=fields, delimiter="\t")
+        if write_header:
+            w.writeheader()
+        w.writerow(row)
 
 
 def main() -> None:
@@ -466,7 +540,7 @@ def main() -> None:
                 w.writerows(out_rows)
             print(f"Wrote batch summary TSV: {args.batch_summary_out}")
     else:
-        analyze_sample(
+        out_row = analyze_sample(
             sample=args.sample_label,
             bam_path=args.bam,
             ref_fasta_path=args.reference,
@@ -474,6 +548,9 @@ def main() -> None:
             pos_tsv_out=args.pos_tsv_out,
             plot_pdf_out=args.plot_pdf_out,
         )
+        if args.summary_tsv_out:
+            write_summary_tsv(args.summary_tsv_out, out_row, args.summary_tsv_append)
+            print(f"Wrote single-sample summary TSV: {args.summary_tsv_out}")
 
 
 if __name__ == "__main__":
