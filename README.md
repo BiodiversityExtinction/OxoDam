@@ -209,6 +209,10 @@ Columns:
 - `p_gc_over_g`: `G>C / G`
 - `p_ca_over_c`: `C>A / C`
 - `p_cg_over_c`: `C>G / C`
+- `excess_gt_rate`: `max(0, (G>T - G>C) / G)`; control-adjusted per-position rate for adding `G>T` damage
+- `excess_ca_rate`: `max(0, (C>A - C>G) / C)`; control-adjusted per-position rate for adding `C>A` damage
+
+The excess-rate columns do not use pseudocounts. A negative signal-minus-control estimate is written as zero, because a negative mutation probability cannot be simulated. If no relevant `G` or `C` observations are available at a position, the corresponding value is `NA`. These are operational control-adjusted estimates rather than proof that the excess was caused by oxidation.
 
 ### Batch summary TSV (`--batch-summary-out`)
 

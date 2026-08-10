@@ -249,6 +249,12 @@ def summarize_bucket(bucket: TransvCounts, pseudocount: float) -> Dict[str, floa
     }
 
 
+def control_adjusted_excess_rate(signal: int, control: int, opportunities: int) -> float:
+    if opportunities <= 0:
+        return float("nan")
+    return max(0.0, (signal - control) / opportunities)
+
+
 def per_position_rows(counts: EndPosCounts, pseudocount: float) -> List[Dict[str, object]]:
     rows: List[Dict[str, object]] = []
     for end in ("3p", "5p"):
@@ -279,6 +285,8 @@ def per_position_rows(counts: EndPosCounts, pseudocount: float) -> List[Dict[str
                     "p_gc_over_g": (gc / g) if g > 0 else float("nan"),
                     "p_ca_over_c": (ca / c) if c > 0 else float("nan"),
                     "p_cg_over_c": (cg / c) if c > 0 else float("nan"),
+                    "excess_gt_rate": control_adjusted_excess_rate(gt, gc, g),
+                    "excess_ca_rate": control_adjusted_excess_rate(ca, cg, c),
                 }
             )
     return rows
@@ -326,13 +334,22 @@ def write_pos_tsv(path: str, rows: List[Dict[str, object]]) -> None:
         "p_gc_over_g",
         "p_ca_over_c",
         "p_cg_over_c",
+        "excess_gt_rate",
+        "excess_ca_rate",
     ]
     with open(path, "w", encoding="utf-8", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=fields, delimiter="\t")
         w.writeheader()
         for r in rows:
             out = dict(r)
-            for k in ("p_gt_over_g", "p_gc_over_g", "p_ca_over_c", "p_cg_over_c"):
+            for k in (
+                "p_gt_over_g",
+                "p_gc_over_g",
+                "p_ca_over_c",
+                "p_cg_over_c",
+                "excess_gt_rate",
+                "excess_ca_rate",
+            ):
                 if isinstance(out[k], float) and math.isnan(out[k]):
                     out[k] = "NA"
             w.writerow(out)
@@ -349,6 +366,7 @@ def read_pos_tsv(path: str) -> List[Dict[str, object]]:
         "p_ca_over_c",
         "p_cg_over_c",
     }
+    optional_excess_fields = {"excess_gt_rate", "excess_ca_rate"}
     rows: List[Dict[str, object]] = []
     with open(path, "r", encoding="utf-8", newline="") as fh:
         reader = csv.DictReader(fh, delimiter="\t")
@@ -358,6 +376,19 @@ def read_pos_tsv(path: str) -> List[Dict[str, object]]:
                 out[key] = int(out[key])
             for key in float_fields:
                 out[key] = float("nan") if out[key] == "NA" else float(out[key])
+            for key in optional_excess_fields:
+                value = out.get(key)
+                if value in {None, ""}:
+                    if key == "excess_gt_rate":
+                        out[key] = control_adjusted_excess_rate(
+                            int(out["G>T"]), int(out["G>C"]), int(out["G"])
+                        )
+                    else:
+                        out[key] = control_adjusted_excess_rate(
+                            int(out["C>A"]), int(out["C>G"]), int(out["C"])
+                        )
+                else:
+                    out[key] = float("nan") if value == "NA" else float(value)
             rows.append(out)
     return rows
 
